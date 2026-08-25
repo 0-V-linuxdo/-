@@ -277,16 +277,16 @@ export const SITE_MANIFEST = Object.freeze([
         displayName: "[DeepSeek] 快捷键跳转",
         sourceEntry: "src/sites/deepseek/index.js",
         metadata: {
-            name: "[DeepSeek] 快捷键跳转 [20260702] v1.2.0",
+            name: "[DeepSeek] 快捷键跳转 [20260825] v1.0.0",
             namespace: "0_V userscripts/[DeepSeek] shortcut",
             description: "为 DeepSeek Chat 添加自定义快捷键(跳转/点击/模拟按键、删除当前聊天、可视化设置面板、按类型筛选、深色模式、自适应布局、图标缓存、快捷键捕获等功能)，基于模版重构。#refactor2025",
-            version: "[20260702] v1.2.0",
-            updateLog: "1.2.0: 新增删除当前聊天动作，默认快捷键 Ctrl+Backspace，并对既有配置进行一次性追加迁移。",
+            version: "[20260825] v1.0.0",
+            updateLog: "1.0.0: 将默认模式改为识图（Vision），并修复模式条被脚本回抢导致无法切换 Instant / Expert / 识图的问题。",
             localized: {
                 "en-US": {
-                    name: "[DeepSeek] Shortcut Jump [20260702] v1.2.0",
+                    name: "[DeepSeek] Shortcut Jump [20260825] v1.0.0",
                     description: "Adds custom shortcuts for DeepSeek Chat with URL jumps, clicks, simulated keys, current-chat deletion, a visual settings panel, filters, dark mode, responsive layout, icon cache, and shortcut capture.",
-                    updateLog: "1.2.0: Added a delete-current-chat action with Ctrl+Backspace by default and a one-time migration for existing shortcut configs."
+                    updateLog: "1.0.0: Changed the default mode to Vision and stopped the script from forcing the switcher back, so Instant / Expert / Vision can be selected."
                 }
             },
             match: [
