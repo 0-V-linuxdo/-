@@ -1,13 +1,13 @@
 // ==UserScript==
-// @name           [DeepSeek] 快捷键跳转 [20260702] v1.2.0
-// @name:en        [DeepSeek] Shortcut Jump [20260702] v1.2.0
+// @name           [DeepSeek] 快捷键跳转 [20260825] v1.0.0
+// @name:en        [DeepSeek] Shortcut Jump [20260825] v1.0.0
 // @namespace      0_V userscripts/[DeepSeek] shortcut
 // @description    为 DeepSeek Chat 添加自定义快捷键(跳转/点击/模拟按键、删除当前聊天、可视化设置面板、按类型筛选、深色模式、自适应布局、图标缓存、快捷键捕获等功能)，基于模版重构。#refactor2025
 // @description:en Adds custom shortcuts for DeepSeek Chat with URL jumps, clicks, simulated keys, current-chat deletion, a visual settings panel, filters, dark mode, responsive layout, icon cache, and shortcut capture.
 
-// @version        [20260702] v1.2.0
-// @update-log     1.2.0: 新增删除当前聊天动作，默认快捷键 Ctrl+Backspace，并对既有配置进行一次性追加迁移。
-// @update-log:en  1.2.0: Added a delete-current-chat action with Ctrl+Backspace by default and a one-time migration for existing shortcut configs.
+// @version        [20260825] v1.0.0
+// @update-log     1.0.0: 将默认模式改为识图（Vision），并修复模式条被脚本回抢导致无法切换 Instant / Expert / 识图的问题。
+// @update-log:en  1.0.0: Changed the default mode to Vision and stopped the script from forcing the switcher back, so Instant / Expert / Vision can be selected.
 
 // @match          https://chat.deepseek.com/*
 
@@ -119,9 +119,25 @@
     const USER_ICONS_STORAGE_KEY = "deepseek_user_icons_v1";
     const DEFAULTS_MIGRATION_KEY = "deepseek_defaults_migrated_20260520_cmdj_adaptive_icons_v1";
     const DELETE_CURRENT_CHAT_SHORTCUT_MIGRATION_KEY = "deepseek_delete_current_chat_shortcut_added_20260702_v1";
-    const DEFAULT_EXPERT_MODE_STORAGE_KEY = "deepseek_default_expert_mode_v1";
-    const DEFAULT_EXPERT_MODE_ENABLED = true;
-    const DEFAULT_EXPERT_MODE_REQUEST_COOLDOWN_MS = 1200;
+    const DEFAULT_VISION_MODE_STORAGE_KEY = "deepseek_default_vision_mode_v1";
+    const DEFAULT_VISION_MODE_ENABLED = true;
+    const DEFAULT_VISION_MODE_REQUEST_COOLDOWN_MS = 1200;
+    const DEEPSEEK_MODE_SWITCHER_FRESH_MS = 500;
+    const DEEPSEEK_PINNED_MODE_TYPE = "vision";
+    const DEEPSEEK_MODE_SPECS = Object.freeze({
+      default: Object.freeze({
+        type: "default",
+        labels: Object.freeze(["Instant", "Fast", "快速模式", "快速"])
+      }),
+      expert: Object.freeze({
+        type: "expert",
+        labels: Object.freeze(["Expert", "专家模式", "专家"])
+      }),
+      vision: Object.freeze({
+        type: "vision",
+        labels: Object.freeze(["Vision", "识图模式", "识图"])
+      })
+    });
     const TemplateUtils = ShortcutTemplate?.utils || {};
     const TemplateDomUtils = TemplateUtils?.dom || {};
     const TemplateEventUtils = TemplateUtils?.events || {};
@@ -1326,7 +1342,7 @@
       "zh-CN": {
         menuCommandLabel: "DeepSeek - 设置快捷键",
         panelTitle: "DeepSeek - 自定义快捷键",
-        defaultExpertModeLabel: "DeepSeek - 默认 Expert 模式: {state}",
+        defaultVisionModeLabel: "DeepSeek - 默认识图模式: {state}",
         deleteCurrentChatConfirm: "确认删除当前聊天？此操作不可撤销。",
         on: "开",
         off: "关",
@@ -1341,7 +1357,7 @@
       "en-US": {
         menuCommandLabel: "DeepSeek - Shortcut settings",
         panelTitle: "DeepSeek - Custom shortcuts",
-        defaultExpertModeLabel: "DeepSeek - Default Expert mode: {state}",
+        defaultVisionModeLabel: "DeepSeek - Default Vision mode: {state}",
         deleteCurrentChatConfirm: "Delete the current chat? This cannot be undone.",
         on: "On",
         off: "Off",
@@ -1630,38 +1646,42 @@
         iconAdaptive: DEEPSEEK_DEFAULT_SHORTCUTS_BY_KEY.sidebarToggle.iconAdaptive
       }
     ];
-    let defaultExpertModeEnabled = getDefaultExpertModeSetting();
-    let defaultExpertModeMenuCommandId = null;
-    let defaultExpertModeWarmupTimer = null;
-    let defaultExpertModeRequestTimer = null;
-    let defaultExpertModeLastRequestAt = 0;
-    let defaultExpertModeObserver = null;
-    function getDefaultExpertModeSetting() {
-      const localFallback = getLocalBooleanFallback(DEFAULT_EXPERT_MODE_STORAGE_KEY, DEFAULT_EXPERT_MODE_ENABLED);
-      const value = gmGetValueLocal(DEFAULT_EXPERT_MODE_STORAGE_KEY, localFallback);
+    let defaultVisionModeEnabled = getDefaultVisionModeSetting();
+    let defaultVisionModeMenuCommandId = null;
+    let defaultVisionModeWarmupTimer = null;
+    let defaultVisionModeRequestTimer = null;
+    let defaultVisionModeLastRequestAt = 0;
+    let defaultVisionModeObserver = null;
+    let defaultVisionModeUserOverride = false;
+    let defaultVisionModeSwitcherVisible = false;
+    let defaultVisionModeSwitcherHiddenAt = 0;
+    function getDefaultVisionModeSetting() {
+      const localFallback = getLocalBooleanFallback(DEFAULT_VISION_MODE_STORAGE_KEY, DEFAULT_VISION_MODE_ENABLED);
+      const value = gmGetValueLocal(DEFAULT_VISION_MODE_STORAGE_KEY, localFallback);
       if (value === true || value === "true" || value === 1 || value === "1") return true;
       if (value === false || value === "false" || value === 0 || value === "0") return false;
       return !!localFallback;
     }
-    function setDefaultExpertModeSetting(value) {
+    function setDefaultVisionModeSetting(value) {
       const enabled = !!value;
-      gmSetValueLocal(DEFAULT_EXPERT_MODE_STORAGE_KEY, enabled);
-      setLocalBooleanFallback(DEFAULT_EXPERT_MODE_STORAGE_KEY, enabled);
+      gmSetValueLocal(DEFAULT_VISION_MODE_STORAGE_KEY, enabled);
+      setLocalBooleanFallback(DEFAULT_VISION_MODE_STORAGE_KEY, enabled);
     }
-    function getDefaultExpertModeMenuLabel(engine2 = null) {
-      const stateText = siteMessage(engine2, defaultExpertModeEnabled ? "on" : "off", {}, defaultExpertModeEnabled ? "开" : "关");
-      return siteMessage(engine2, "defaultExpertModeLabel", { state: stateText }, `DeepSeek - 默认 Expert 模式: ${stateText}`);
+    function getDefaultVisionModeMenuLabel(engine2 = null) {
+      const stateText = siteMessage(engine2, defaultVisionModeEnabled ? "on" : "off", {}, defaultVisionModeEnabled ? "开" : "关");
+      return siteMessage(engine2, "defaultVisionModeLabel", { state: stateText }, `DeepSeek - 默认识图模式: ${stateText}`);
     }
-    function registerDefaultExpertModeMenuCommand(engine2 = null) {
-      if (defaultExpertModeMenuCommandId !== null) {
-        gmUnregisterMenuCommandLocal(defaultExpertModeMenuCommandId);
-        defaultExpertModeMenuCommandId = null;
+    function registerDefaultVisionModeMenuCommand(engine2 = null) {
+      if (defaultVisionModeMenuCommandId !== null) {
+        gmUnregisterMenuCommandLocal(defaultVisionModeMenuCommandId);
+        defaultVisionModeMenuCommandId = null;
       }
-      defaultExpertModeMenuCommandId = gmRegisterMenuCommandLocal(getDefaultExpertModeMenuLabel(engine2), () => {
-        setDefaultExpertModePreference(!defaultExpertModeEnabled, engine2);
+      defaultVisionModeMenuCommandId = gmRegisterMenuCommandLocal(getDefaultVisionModeMenuLabel(engine2), () => {
+        setDefaultVisionModePreference(!defaultVisionModeEnabled, engine2);
       });
     }
-    const DEEPSEEK_MODE_CONTROL_SELECTOR = "input[type='radio'], [role='radio'], button, [role='button'], [aria-checked], [aria-selected], label";
+    const DEEPSEEK_MODE_CONTROL_SELECTOR = "[role='radio'][data-model-type], input[type='radio'][data-model-type], input[type='radio'], [role='radio'], button, [role='button'], [aria-checked], [aria-selected], label";
+    const DEEPSEEK_MODE_TYPED_RADIO_SELECTOR = "[role='radio'][data-model-type], input[type='radio'][data-model-type]";
     function matchesDeepSeekSelector(element, selector) {
       if (!element || typeof element.matches !== "function") return false;
       try {
@@ -1678,8 +1698,15 @@
         return null;
       }
     }
+    function escapeDeepSeekCssIdent(value) {
+      const raw = String(value ?? "");
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(raw);
+      return raw.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+    }
     function resolveDeepSeekModeControl(element) {
       if (!element) return null;
+      const typed = closestDeepSeekSelector(element, DEEPSEEK_MODE_TYPED_RADIO_SELECTOR);
+      if (typed) return typed;
       if (matchesDeepSeekSelector(element, DEEPSEEK_MODE_CONTROL_SELECTOR)) return element;
       return closestDeepSeekSelector(element, DEEPSEEK_MODE_CONTROL_SELECTOR) || element;
     }
@@ -1746,18 +1773,23 @@
       if (element && isVisibleElement(element)) return element;
       return control || element || null;
     }
-    function findDeepSeekModeOption(labels) {
-      const candidates = Array.from(document.querySelectorAll("[role='radio'], input[type='radio'], [aria-checked], [aria-selected], label, button, [role='button']")).filter(isVisibleElement).map((element) => {
-        const control = resolveDeepSeekModeControl(element) || element;
-        if (matchesAnyLabel(element, labels, { exact: true }) || matchesAnyLabel(control, labels, { exact: true })) {
-          return { element: control, exact: true };
-        }
-        if (matchesAnyLabel(element, labels, { exact: false }) || matchesAnyLabel(control, labels, { exact: false })) {
-          return { element: control, exact: false };
-        }
-        return null;
-      }).filter(Boolean);
-      if (!candidates.length) return resolveDeepSeekModeControl(findExactTextElement(labels));
+    function isAmbiguousDeepSeekModeLabel(element) {
+      const token = normalizeDeepSeekToken(getElementLabelText(element));
+      if (!token) return false;
+      const hits = [
+        /(?:instant|\bfast\b|快速)/,
+        /(?:expert|专家)/,
+        /(?:vision|识图)/
+      ].filter((pattern) => pattern.test(token)).length;
+      return hits >= 2;
+    }
+    function queryDeepSeekModeControlCandidates() {
+      const typed = queryDeepSeekAll(DEEPSEEK_MODE_TYPED_RADIO_SELECTOR).filter(isVisibleElement);
+      if (typed.length) return typed;
+      return Array.from(document.querySelectorAll("[role='radio'], input[type='radio'], [aria-checked], [aria-selected], label, button, [role='button']")).filter(isVisibleElement);
+    }
+    function pickBestDeepSeekModeCandidate(candidates) {
+      if (!candidates.length) return null;
       const composerInput = getVisibleComposerInputs()[0] || null;
       if (!composerInput) {
         return candidates.find((item) => item.exact)?.element || candidates[0].element;
@@ -1773,140 +1805,266 @@
         return { element, score };
       }).sort((a, b) => a.score - b.score)[0]?.element || null;
     }
-    function isDeepSeekExpertModeSelected() {
-      const expertOption = findDeepSeekModeOption(["Expert"]);
-      const expertSelected = readDeepSeekModeOptionSelected(expertOption);
-      if (expertSelected !== null) return expertSelected;
-      const instantOption = findDeepSeekModeOption(["Instant"]);
-      const instantSelected = readDeepSeekModeOptionSelected(instantOption);
-      if (instantSelected === true) return false;
-      if (instantSelected === false && expertOption) return true;
-      return null;
+    function findDeepSeekModeOption(labels) {
+      const candidates = queryDeepSeekModeControlCandidates().map((element) => {
+        if (isAmbiguousDeepSeekModeLabel(element)) return null;
+        const control = resolveDeepSeekModeControl(element) || element;
+        if (isAmbiguousDeepSeekModeLabel(control)) return null;
+        if (matchesAnyLabel(element, labels, { exact: true }) || matchesAnyLabel(control, labels, { exact: true })) {
+          return { element: control, exact: true };
+        }
+        if (matchesAnyLabel(element, labels, { exact: false }) || matchesAnyLabel(control, labels, { exact: false })) {
+          return { element: control, exact: false };
+        }
+        return null;
+      }).filter(Boolean);
+      if (!candidates.length) {
+        const fallback = findExactTextElement(labels);
+        return fallback && !isAmbiguousDeepSeekModeLabel(fallback) ? resolveDeepSeekModeControl(fallback) : null;
+      }
+      return pickBestDeepSeekModeCandidate(candidates);
     }
-    function selectDeepSeekExpertMode() {
-      const selected = isDeepSeekExpertModeSelected();
+    function findDeepSeekModeOptionByType(modeKey) {
+      const spec = DEEPSEEK_MODE_SPECS[modeKey];
+      if (!spec) return null;
+      const escapedType = escapeDeepSeekCssIdent(spec.type);
+      const typeSelector = `[role='radio'][data-model-type="${escapedType}"], input[type='radio'][data-model-type="${escapedType}"]`;
+      const typed = queryDeepSeekAll(typeSelector).filter(isVisibleElement).map((element) => ({ element: resolveDeepSeekModeControl(element) || element, exact: true }));
+      if (typed.length) return pickBestDeepSeekModeCandidate(typed);
+      return findDeepSeekModeOption(spec.labels);
+    }
+    function getDeepSeekModeTypeFromControl(element) {
+      const control = resolveDeepSeekModeControl(element);
+      const type = String(control?.getAttribute?.("data-model-type") || "").trim().toLowerCase();
+      if (type) return type;
+      const label = normalizeDeepSeekToken(getElementLabelText(control || element));
+      if (/(?:vision|识图)/.test(label)) return "vision";
+      if (/(?:expert|专家)/.test(label)) return "expert";
+      if (/(?:instant|\bfast\b|快速)/.test(label)) return "default";
+      return "";
+    }
+    function getDeepSeekModeEventControl(target) {
+      if (!target || typeof target.closest !== "function") return null;
+      return closestDeepSeekSelector(target, DEEPSEEK_MODE_TYPED_RADIO_SELECTOR) || closestDeepSeekSelector(target, "[role='radio'], input[type='radio'], [aria-checked], button, [role='button'], label");
+    }
+    function getDeepSeekModeTypeFromPoint(clientX, clientY, root = document) {
+      const x = Number(clientX);
+      const y = Number(clientY);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
+      try {
+        const top = root.elementFromPoint?.(x, y);
+        const typed = getDeepSeekModeTypeFromControl(getDeepSeekModeEventControl(top));
+        if (typed) return typed;
+      } catch {
+      }
+      const radios = queryDeepSeekAll(DEEPSEEK_MODE_TYPED_RADIO_SELECTOR, root).filter(isVisibleElement);
+      for (const radio of radios) {
+        const rect = radio.getBoundingClientRect();
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+          return getDeepSeekModeTypeFromControl(radio);
+        }
+      }
+      return "";
+    }
+    function getDeepSeekModeTypeFromEvent(event) {
+      const fromTarget = getDeepSeekModeTypeFromControl(getDeepSeekModeEventControl(event?.target));
+      if (fromTarget) return fromTarget;
+      return getDeepSeekModeTypeFromPoint(event?.clientX, event?.clientY);
+    }
+    function isDeepSeekModeSwitcherEventTarget(target) {
+      if (!target || typeof target.closest !== "function") return false;
+      return !!closestDeepSeekSelector(target, `[role='radiogroup'], ${DEEPSEEK_MODE_TYPED_RADIO_SELECTOR}`);
+    }
+    function isDeepSeekVisionModeSelected() {
+      const visionOption = findDeepSeekModeOptionByType("vision");
+      return readDeepSeekModeOptionSelected(visionOption);
+    }
+    function selectDeepSeekVisionMode() {
+      const selected = isDeepSeekVisionModeSelected();
       if (selected === true) return true;
-      const expertOption = findDeepSeekModeOption(["Expert"]);
-      if (!expertOption) return false;
-      const clicked = clickDeepSeekElementNativeFirst(getDeepSeekModeClickTarget(expertOption));
+      const visionOption = findDeepSeekModeOptionByType("vision");
+      if (!visionOption) return false;
+      const clicked = clickDeepSeekElementNativeFirst(getDeepSeekModeClickTarget(visionOption));
       if (!clicked) return false;
-      return isDeepSeekExpertModeSelected() === true;
+      return isDeepSeekVisionModeSelected() === true;
     }
-    function shouldWarmupDefaultExpertMode() {
-      return defaultExpertModeEnabled;
+    function isDeepSeekModeSwitcherVisible() {
+      return queryDeepSeekModeControlCandidates().some((element) => {
+        const type = getDeepSeekModeTypeFromControl(element);
+        return type === "vision" || type === "expert" || type === "default";
+      });
     }
-    function stopDefaultExpertModeWarmup() {
-      if (defaultExpertModeWarmupTimer === null) return;
+    function isDeepSeekNewChatEventTarget(target) {
+      const element = target && typeof target.closest === "function" ? target.closest("a[href], button, [role='button']") : null;
+      if (!element) return false;
+      const href = String(element.getAttribute?.("href") || element.href || "").trim();
+      if (href === "/" || /https?:\/\/chat\.deepseek\.com\/?$/.test(href)) return true;
+      const label = normalizeDeepSeekToken(getElementLabelText(element));
+      return label === normalizeDeepSeekToken("新聊天") || label === normalizeDeepSeekToken("new chat") || label === normalizeDeepSeekToken("new conversation");
+    }
+    function syncDeepSeekModeSwitcherVisibility() {
+      const visible = isDeepSeekModeSwitcherVisible();
+      if (!visible) {
+        if (defaultVisionModeSwitcherVisible) {
+          defaultVisionModeSwitcherHiddenAt = Date.now();
+        }
+        defaultVisionModeSwitcherVisible = false;
+        return false;
+      }
+      const hiddenFor = defaultVisionModeSwitcherHiddenAt ? Date.now() - defaultVisionModeSwitcherHiddenAt : Number.POSITIVE_INFINITY;
+      const appearedFresh = !defaultVisionModeSwitcherVisible && hiddenFor >= DEEPSEEK_MODE_SWITCHER_FRESH_MS;
+      defaultVisionModeSwitcherVisible = true;
+      if (appearedFresh) defaultVisionModeUserOverride = false;
+      return appearedFresh;
+    }
+    function shouldWarmupDefaultVisionMode() {
+      return defaultVisionModeEnabled && !defaultVisionModeUserOverride;
+    }
+    function stopDefaultVisionModeWarmup() {
+      if (defaultVisionModeWarmupTimer === null) return;
       try {
-        clearInterval(defaultExpertModeWarmupTimer);
+        clearInterval(defaultVisionModeWarmupTimer);
       } catch {
       }
-      defaultExpertModeWarmupTimer = null;
+      defaultVisionModeWarmupTimer = null;
     }
-    function cancelDefaultExpertModeRequest() {
-      if (defaultExpertModeRequestTimer === null) return;
+    function cancelDefaultVisionModeRequest() {
+      if (defaultVisionModeRequestTimer === null) return;
       try {
-        clearTimeout(defaultExpertModeRequestTimer);
+        clearTimeout(defaultVisionModeRequestTimer);
       } catch {
       }
-      defaultExpertModeRequestTimer = null;
+      defaultVisionModeRequestTimer = null;
     }
-    function startDefaultExpertModeWarmup({ attempts = 12, intervalMs = 400 } = {}) {
-      cancelDefaultExpertModeRequest();
-      stopDefaultExpertModeWarmup();
-      if (!shouldWarmupDefaultExpertMode()) return;
+    function startDefaultVisionModeWarmup({ attempts = 12, intervalMs = 400 } = {}) {
+      cancelDefaultVisionModeRequest();
+      stopDefaultVisionModeWarmup();
+      if (!shouldWarmupDefaultVisionMode()) return;
       let remaining = Math.max(1, Number(attempts) || 1);
       const interval = Math.max(120, Number(intervalMs) || 400);
       const tick = () => {
-        if (!shouldWarmupDefaultExpertMode()) return true;
-        if (selectDeepSeekExpertMode()) return true;
+        if (!shouldWarmupDefaultVisionMode()) return true;
+        if (selectDeepSeekVisionMode()) return true;
         remaining -= 1;
         return remaining <= 0;
       };
       if (tick()) return;
-      defaultExpertModeWarmupTimer = window.setInterval(() => {
-        if (tick()) stopDefaultExpertModeWarmup();
+      defaultVisionModeWarmupTimer = window.setInterval(() => {
+        if (tick()) stopDefaultVisionModeWarmup();
       }, interval);
     }
-    function requestDefaultExpertModeWarmup({ attempts = 8, intervalMs = 300, delayMs = 0 } = {}) {
-      if (!shouldWarmupDefaultExpertMode()) return;
+    function requestDefaultVisionModeWarmup({ attempts = 8, intervalMs = 300, delayMs = 0 } = {}) {
+      if (!shouldWarmupDefaultVisionMode()) return;
       const now = Date.now();
       const delay = Math.max(0, Number(delayMs) || 0);
-      const cooldown = Math.max(0, DEFAULT_EXPERT_MODE_REQUEST_COOLDOWN_MS - (now - defaultExpertModeLastRequestAt));
+      const cooldown = Math.max(0, DEFAULT_VISION_MODE_REQUEST_COOLDOWN_MS - (now - defaultVisionModeLastRequestAt));
       const waitMs = Math.max(delay, cooldown);
-      if (defaultExpertModeRequestTimer !== null) return;
-      defaultExpertModeRequestTimer = window.setTimeout(() => {
-        defaultExpertModeRequestTimer = null;
-        defaultExpertModeLastRequestAt = Date.now();
-        startDefaultExpertModeWarmup({ attempts, intervalMs });
+      if (defaultVisionModeRequestTimer !== null) return;
+      defaultVisionModeRequestTimer = window.setTimeout(() => {
+        defaultVisionModeRequestTimer = null;
+        defaultVisionModeLastRequestAt = Date.now();
+        startDefaultVisionModeWarmup({ attempts, intervalMs });
       }, waitMs);
     }
-    function isDefaultExpertModeEventTarget(target) {
-      const element = target && typeof target.closest === "function" ? target.closest("[role='radio'], input[type='radio'], [aria-checked], button, [role='button'], label") : null;
-      if (!element) return false;
-      const label = normalizeDeepSeekToken(getElementLabelText(element));
-      return /\b(?:instant|expert)\b/.test(label);
-    }
-    function setDefaultExpertModePreference(nextValue, engine2 = null) {
-      defaultExpertModeEnabled = !!nextValue;
-      setDefaultExpertModeSetting(defaultExpertModeEnabled);
-      if (defaultExpertModeEnabled) {
-        requestDefaultExpertModeWarmup({ attempts: 12, intervalMs: 300, delayMs: 0 });
-      } else {
-        cancelDefaultExpertModeRequest();
-        stopDefaultExpertModeWarmup();
+    function rememberDeepSeekUserModeChoice(modelType) {
+      if (modelType === DEEPSEEK_PINNED_MODE_TYPE) {
+        defaultVisionModeUserOverride = false;
+        return;
       }
-      console.info(`${LOG_TAG} default Expert mode is now ${defaultExpertModeEnabled ? "enabled" : "disabled"}.`);
-      registerDefaultExpertModeMenuCommand(engine2);
-      return defaultExpertModeEnabled;
+      defaultVisionModeUserOverride = true;
+      cancelDefaultVisionModeRequest();
+      stopDefaultVisionModeWarmup();
     }
-    function setupDefaultExpertModeObserver() {
-      if (defaultExpertModeObserver || typeof MutationObserver !== "function") return;
+    function markDeepSeekModeSwitcherHandledByUser() {
+      defaultVisionModeUserOverride = true;
+      cancelDefaultVisionModeRequest();
+      stopDefaultVisionModeWarmup();
+    }
+    function handleDeepSeekModeUserGesture(event) {
+      if (!event || event.isTrusted === false) return;
+      if (isDeepSeekNewChatEventTarget(event.target)) {
+        defaultVisionModeUserOverride = false;
+        defaultVisionModeSwitcherVisible = false;
+        defaultVisionModeSwitcherHiddenAt = 0;
+        requestDefaultVisionModeWarmup({ attempts: 12, intervalMs: 300, delayMs: 250 });
+        return;
+      }
+      const modelType = getDeepSeekModeTypeFromEvent(event);
+      if (modelType) {
+        rememberDeepSeekUserModeChoice(modelType);
+        return;
+      }
+      if (isDeepSeekModeSwitcherEventTarget(event.target)) {
+        markDeepSeekModeSwitcherHandledByUser();
+      }
+    }
+    function setDefaultVisionModePreference(nextValue, engine2 = null) {
+      defaultVisionModeEnabled = !!nextValue;
+      setDefaultVisionModeSetting(defaultVisionModeEnabled);
+      if (defaultVisionModeEnabled) {
+        defaultVisionModeUserOverride = false;
+        requestDefaultVisionModeWarmup({ attempts: 12, intervalMs: 300, delayMs: 0 });
+      } else {
+        cancelDefaultVisionModeRequest();
+        stopDefaultVisionModeWarmup();
+      }
+      console.info(`${LOG_TAG} default Vision mode is now ${defaultVisionModeEnabled ? "enabled" : "disabled"}.`);
+      registerDefaultVisionModeMenuCommand(engine2);
+      return defaultVisionModeEnabled;
+    }
+    function setupDefaultVisionModeObserver() {
+      if (defaultVisionModeObserver || typeof MutationObserver !== "function") return;
       const root = document.documentElement || document.body;
       if (!root) return;
-      defaultExpertModeObserver = new MutationObserver(() => {
-        if (!shouldWarmupDefaultExpertMode()) return;
-        if (defaultExpertModeRequestTimer !== null || defaultExpertModeWarmupTimer !== null) return;
-        if (isDeepSeekExpertModeSelected() === true) return;
-        requestDefaultExpertModeWarmup({ attempts: 6, intervalMs: 250, delayMs: 80 });
+      defaultVisionModeObserver = new MutationObserver(() => {
+        const appearedFresh = syncDeepSeekModeSwitcherVisibility();
+        if (!appearedFresh) return;
+        if (!shouldWarmupDefaultVisionMode()) return;
+        if (defaultVisionModeRequestTimer !== null || defaultVisionModeWarmupTimer !== null) return;
+        if (isDeepSeekVisionModeSelected() === true) return;
+        requestDefaultVisionModeWarmup({ attempts: 6, intervalMs: 250, delayMs: 80 });
       });
       try {
-        defaultExpertModeObserver.observe(root, {
+        defaultVisionModeObserver.observe(root, {
           childList: true,
           subtree: true,
           attributes: true,
-          attributeFilter: ["aria-checked", "aria-selected", "aria-pressed", "data-state", "data-selected", "class"]
+          attributeFilter: ["aria-checked", "aria-selected", "aria-pressed", "data-state", "data-selected", "data-model-type", "class"]
         });
       } catch {
-        defaultExpertModeObserver = null;
+        defaultVisionModeObserver = null;
       }
     }
-    function setupDefaultExpertModeSelection() {
-      setupDefaultExpertModeObserver();
+    function setupDefaultVisionModeSelection() {
+      setupDefaultVisionModeObserver();
+      syncDeepSeekModeSwitcherVisibility();
       window.addEventListener("load", () => {
-        requestDefaultExpertModeWarmup({ attempts: 14, intervalMs: 350, delayMs: 650 });
+        requestDefaultVisionModeWarmup({ attempts: 14, intervalMs: 350, delayMs: 650 });
       }, { once: true });
       if (document.readyState === "interactive" || document.readyState === "complete") {
-        requestDefaultExpertModeWarmup({ attempts: 14, intervalMs: 350, delayMs: 350 });
+        requestDefaultVisionModeWarmup({ attempts: 14, intervalMs: 350, delayMs: 350 });
       }
       let lastUrl = location.href;
       const handlePossibleRouteChange = () => {
         const currentUrl = location.href;
         if (currentUrl === lastUrl) return;
         lastUrl = currentUrl;
-        requestDefaultExpertModeWarmup({ attempts: 10, intervalMs: 300, delayMs: 250 });
+        defaultVisionModeUserOverride = false;
+        defaultVisionModeSwitcherVisible = false;
+        defaultVisionModeSwitcherHiddenAt = 0;
+        requestDefaultVisionModeWarmup({ attempts: 10, intervalMs: 300, delayMs: 250 });
       };
       const patchHistoryMethod = (methodName) => {
         try {
           const original = window.history?.[methodName];
-          if (typeof original !== "function" || original.__deepseekDefaultExpertPatched) return;
+          if (typeof original !== "function" || original.__deepseekDefaultVisionPatched) return;
           const patched = function(...args) {
             const result = original.apply(this, args);
             handlePossibleRouteChange();
             return result;
           };
-          patched.__deepseekDefaultExpertPatched = true;
-          patched.__deepseekDefaultExpertOriginal = original;
+          patched.__deepseekDefaultVisionPatched = true;
+          patched.__deepseekDefaultVisionOriginal = original;
           window.history[methodName] = patched;
         } catch {
         }
@@ -1915,15 +2073,14 @@
       patchHistoryMethod("replaceState");
       window.addEventListener("popstate", handlePossibleRouteChange);
       window.addEventListener("hashchange", handlePossibleRouteChange);
-      document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") {
-          requestDefaultExpertModeWarmup({ attempts: 10, intervalMs: 300, delayMs: 200 });
-        }
-      });
-      document.addEventListener("click", (event) => {
-        if (event && event.isTrusted === false) return;
-        if (!isDefaultExpertModeEventTarget(event.target)) return;
-        requestDefaultExpertModeWarmup({ attempts: 6, intervalMs: 220, delayMs: 450 });
+      document.addEventListener("pointerdown", handleDeepSeekModeUserGesture, true);
+      document.addEventListener("mousedown", handleDeepSeekModeUserGesture, true);
+      document.addEventListener("click", handleDeepSeekModeUserGesture, true);
+      document.addEventListener("keydown", (event) => {
+        if (!event || event.isTrusted === false) return;
+        if (!/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End| )$/.test(event.key)) return;
+        if (!isDeepSeekModeSwitcherEventTarget(event.target)) return;
+        markDeepSeekModeSwitcherHandledByUser();
       }, true);
     }
     function findDeepSeekSelectorFallback(shortcut) {
@@ -2032,8 +2189,8 @@
       }
     });
     engine.init();
-    registerDefaultExpertModeMenuCommand(engine);
-    setupDefaultExpertModeSelection();
-    engine.i18n?.addLocaleChangeListener?.(() => registerDefaultExpertModeMenuCommand(engine));
+    registerDefaultVisionModeMenuCommand(engine);
+    setupDefaultVisionModeSelection();
+    engine.i18n?.addLocaleChangeListener?.(() => registerDefaultVisionModeMenuCommand(engine));
   })();
 })();
